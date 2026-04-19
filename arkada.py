@@ -90,7 +90,7 @@ class Paddle:
 
     def move(self, dx: float, dt: float) -> None:
         self.rect.x += int(round(dx * dt))
-        self.rect.clamp_ip(pygame.Rect(0, 0, SCREEN_W - self.rect.width, SCREEN_H))
+        self.rect.clamp_ip(pygame.Rect(0, 0, SCREEN_W, SCREEN_H))
 
 
 class Ball:
