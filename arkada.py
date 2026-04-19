@@ -1,7 +1,7 @@
 """
 Простая аркада: платформа, мяч, кирпичи, бонусы с цветных кирпичей.
 Зависимость: pip install pygame
-Стиль отрисовки намеренно минимальный — только логика и базовая визуализация.
+Визуал: лаконичный интерфейс, линейные и радиальные градиенты.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from enum import Enum, auto
 from typing import List, Optional, Sequence, Tuple
 
 import pygame
+
+Color = Tuple[int, int, int]
 
 
 # --- константы (размеры экрана и скорости; «стиль» не зафиксирован) ---
@@ -41,6 +43,82 @@ SPECIAL_BRICK_FRACTION = 0.15  # доля «цветных» кирпичей с
 POWERUP_FALL_SPEED = 120.0
 PADDLE_GROWTH = 1.15  # +15%
 PADDLE_MAX_W_FRACTION = 0.85  # не шире 85% экрана
+
+# палитра (градиенты «сверху / слева» → «снизу / справа»)
+UI_BG_TOP = (26, 30, 48)
+UI_BG_BOTTOM = (12, 14, 24)
+UI_BRICK_TOP = (72, 78, 102)
+UI_BRICK_BOTTOM = (42, 46, 68)
+UI_BRICK_SPECIAL_TOP = (140, 96, 118)
+UI_BRICK_SPECIAL_BOTTOM = (82, 52, 72)
+UI_PADDLE_LEFT = (218, 222, 240)
+UI_PADDLE_RIGHT = (148, 154, 182)
+UI_BALL_CORE = (255, 236, 178)
+UI_BALL_EDGE = (190, 120, 64)
+UI_POWER_CORE = (200, 248, 255)
+UI_POWER_EDGE = (52, 140, 198)
+UI_TEXT_DIM = (200, 204, 220)
+UI_TEXT_ACCENT = (255, 255, 255)
+
+
+def _lerp_byte(a: int, b: int, t: float) -> int:
+    return int(max(0, min(255, round(a + (b - a) * t))))
+
+
+def lerp_color(c0: Color, c1: Color, t: float) -> Color:
+    t = max(0.0, min(1.0, t))
+    return (
+        _lerp_byte(c0[0], c1[0], t),
+        _lerp_byte(c0[1], c1[1], t),
+        _lerp_byte(c0[2], c1[2], t),
+    )
+
+
+def make_vertical_gradient(size: Tuple[int, int], top: Color, bottom: Color) -> pygame.Surface:
+    w, h = size
+    surf = pygame.Surface(size)
+    if h <= 1:
+        surf.fill(top)
+        return surf
+    for y in range(h):
+        t = y / (h - 1)
+        pygame.draw.line(surf, lerp_color(top, bottom, t), (0, y), (w - 1, y))
+    return surf
+
+
+def make_horizontal_gradient(size: Tuple[int, int], left: Color, right: Color) -> pygame.Surface:
+    w, h = size
+    surf = pygame.Surface(size)
+    if w <= 1:
+        surf.fill(left)
+        return surf
+    for x in range(w):
+        t = x / (w - 1)
+        pygame.draw.line(surf, lerp_color(left, right, t), (x, 0), (x, h - 1))
+    return surf
+
+
+def brick_dimensions() -> Tuple[int, int]:
+    total_w = SCREEN_W - 2 * BRICK_MARGIN_X
+    cell = (total_w - (BRICK_COLS - 1) * BRICK_GAP) / BRICK_COLS
+    return int(cell), BRICK_H
+
+
+def draw_radial_ball(
+    target: pygame.Surface,
+    cx: int,
+    cy: int,
+    radius: int,
+    core: Color,
+    edge: Color,
+) -> None:
+    if radius <= 0:
+        return
+    steps = max(radius, 6)
+    for i in range(steps, 0, -1):
+        t = i / steps
+        col = lerp_color(core, edge, t)
+        pygame.draw.circle(target, col, (cx, cy), max(1, int(radius * t)))
 
 
 class GameState(Enum):
@@ -189,10 +267,35 @@ def bricks_remaining(bricks: Sequence[Brick]) -> int:
 def main() -> None:
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-    pygame.display.set_caption("Arkada (logic)")
+    pygame.display.set_caption("Arkada")
+
+    bg = make_vertical_gradient((SCREEN_W, SCREEN_H), UI_BG_TOP, UI_BG_BOTTOM)
+    bw, bh = brick_dimensions()
+    brick_surf_normal = make_vertical_gradient((bw, bh), UI_BRICK_TOP, UI_BRICK_BOTTOM)
+    brick_surf_special = make_vertical_gradient(
+        (bw, bh), UI_BRICK_SPECIAL_TOP, UI_BRICK_SPECIAL_BOTTOM
+    )
+    paddle_grad_src = make_horizontal_gradient(
+        (256, PADDLE_H), UI_PADDLE_LEFT, UI_PADDLE_RIGHT
+    )
+
+    hud_h = 44
+    hud_bar = make_vertical_gradient((SCREEN_W, hud_h), (36, 40, 60), (20, 22, 36))
+    vignette = pygame.Surface((SCREEN_W, 100), pygame.SRCALPHA)
+    for y in range(100):
+        a = int(55 * (y / 99.0) ** 1.2)
+        pygame.draw.line(vignette, (0, 0, 0, a), (0, y), (SCREEN_W - 1, y))
+
+    end_veil = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+    for y in range(SCREEN_H):
+        t = (y / max(SCREEN_H - 1, 1)) ** 0.85
+        a = int(70 + 120 * t)
+        pygame.draw.line(end_veil, (10, 12, 22, a), (0, y), (SCREEN_W - 1, y))
+
     clock = pygame.time.Clock()
 
-    font = pygame.font.SysFont("consolas", 22)
+    font = pygame.font.SysFont("segoeui", 22)
+    font_title = pygame.font.SysFont("segoeui", 24, bold=True)
 
     paddle = Paddle()
     ball = Ball()
@@ -313,31 +416,98 @@ def main() -> None:
                         paddle.grow()
                         p.active = False
 
-        # отрисовка (заглушка)
-        screen.fill((24, 24, 28))
+        screen.blit(bg, (0, 0))
+
         for b in bricks:
-            if b.alive:
-                color = (180, 90, 90) if b.special else (140, 140, 150)
-                pygame.draw.rect(screen, color, b.rect)
-        pygame.draw.rect(screen, (200, 200, 220), paddle.rect)
-        pygame.draw.circle(
-            screen, (240, 240, 100), (int(ball.x), int(ball.y)), BALL_RADIUS
+            if not b.alive:
+                continue
+            img = brick_surf_special if b.special else brick_surf_normal
+            screen.blit(img, b.rect.topleft)
+            shade = lerp_color(UI_BRICK_BOTTOM, (18, 20, 30), 0.35)
+            pygame.draw.line(
+                screen,
+                shade,
+                (b.rect.left, b.rect.bottom - 1),
+                (b.rect.right - 1, b.rect.bottom - 1),
+            )
+
+        pw, ph = paddle.rect.size
+        paddle_draw = pygame.transform.smoothscale(paddle_grad_src, (max(1, pw), ph))
+        screen.blit(paddle_draw, paddle.rect.topleft)
+        hi = lerp_color(UI_PADDLE_LEFT, (255, 255, 255), 0.45)
+        pygame.draw.line(
+            screen,
+            hi,
+            (paddle.rect.left + 1, paddle.rect.top),
+            (paddle.rect.right - 2, paddle.rect.top),
         )
+        lo = lerp_color(UI_PADDLE_RIGHT, (24, 26, 38), 0.5)
+        pygame.draw.line(
+            screen,
+            lo,
+            (paddle.rect.left + 1, paddle.rect.bottom - 1),
+            (paddle.rect.right - 2, paddle.rect.bottom - 1),
+        )
+
+        draw_radial_ball(
+            screen,
+            int(ball.x),
+            int(ball.y),
+            BALL_RADIUS,
+            UI_BALL_CORE,
+            UI_BALL_EDGE,
+        )
+        gloss = lerp_color(UI_BALL_CORE, (255, 255, 255), 0.55)
+        pygame.draw.circle(
+            screen,
+            gloss,
+            (int(ball.x) - 2, int(ball.y) - 2),
+            max(2, BALL_RADIUS // 3),
+        )
+
         for p in powerups:
             if p.active:
-                pygame.draw.circle(
-                    screen, (80, 200, 255), (int(p.x), int(p.y)), int(p.radius)
+                draw_radial_ball(
+                    screen,
+                    int(p.x),
+                    int(p.y),
+                    int(p.radius),
+                    UI_POWER_CORE,
+                    UI_POWER_EDGE,
                 )
 
-        if state == GameState.WON:
-            msg = font.render("Победа: все кирпичи сбиты (R — заново)", True, (255, 255, 255))
-            screen.blit(msg, (SCREEN_W // 2 - msg.get_width() // 2, SCREEN_H // 2))
-        elif state == GameState.LOST:
-            msg = font.render("Мяч утерян (R — заново)", True, (255, 200, 200))
-            screen.blit(msg, (SCREEN_W // 2 - msg.get_width() // 2, SCREEN_H // 2))
+        screen.blit(vignette, (0, SCREEN_H - vignette.get_height()))
+        screen.blit(hud_bar, (0, 0))
 
-        hint = font.render("Стрелки ← →   R рестарт", True, (160, 160, 170))
-        screen.blit(hint, (8, 8))
+        if state == GameState.WON:
+            screen.blit(end_veil, (0, 0))
+            line = "Все кирпичи сбиты"
+            sub = "R — новая партия"
+            title = font_title.render(line, True, UI_TEXT_ACCENT)
+            st = font.render(sub, True, UI_TEXT_DIM)
+            tx = SCREEN_W // 2 - title.get_width() // 2
+            ty = SCREEN_H // 2 - title.get_height() // 2 - 8
+            screen.blit(font_title.render(line, True, (14, 16, 28)), (tx + 2, ty + 2))
+            screen.blit(title, (tx, ty))
+            sx = SCREEN_W // 2 - st.get_width() // 2
+            sy = ty + title.get_height() + 10
+            screen.blit(st, (sx, sy))
+        elif state == GameState.LOST:
+            screen.blit(end_veil, (0, 0))
+            line = "Мяч утерян"
+            sub = "R — заново"
+            title = font_title.render(line, True, (255, 210, 210))
+            st = font.render(sub, True, UI_TEXT_DIM)
+            tx = SCREEN_W // 2 - title.get_width() // 2
+            ty = SCREEN_H // 2 - title.get_height() // 2 - 8
+            screen.blit(font_title.render(line, True, (48, 22, 28)), (tx + 2, ty + 2))
+            screen.blit(title, (tx, ty))
+            sx = SCREEN_W // 2 - st.get_width() // 2
+            sy = ty + title.get_height() + 10
+            screen.blit(st, (sx, sy))
+
+        hint = font.render("← → движение    R рестарт", True, UI_TEXT_DIM)
+        screen.blit(hint, (14, 12))
 
         pygame.display.flip()
 
